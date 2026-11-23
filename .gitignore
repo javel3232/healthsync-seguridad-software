@@ -1,0 +1,20 @@
+# Secretos locales
+.env
+
+# Dependencias y compilados
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+worker/robot
+
+# Entregas generadas
+entregas/
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

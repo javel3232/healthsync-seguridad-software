@@ -1,0 +1,51 @@
+{
+  "nombre": "HealthSync",
+  "roles": {
+    "paciente": {
+      "etiqueta": "Paciente",
+      "registro_publico": true,
+      "requiere_aprobacion": false
+    },
+    "profesional": {
+      "etiqueta": "Profesional de salud",
+      "registro_publico": true,
+      "requiere_aprobacion": true
+    },
+    "admin": {
+      "etiqueta": "Administrador",
+      "registro_publico": false,
+      "requiere_aprobacion": false
+    }
+  },
+  "cuentas_prueba": [
+    {
+      "nombre": "Administrador Dos",
+      "email": "admin2@healthsync.test",
+      "rol": "admin"
+    },
+    {
+      "nombre": "Paciente Uno",
+      "email": "paciente1@healthsync.test",
+      "rol": "paciente"
+    },
+    {
+      "nombre": "Paciente Dos",
+      "email": "paciente2@healthsync.test",
+      "rol": "paciente"
+    },
+    {
+      "nombre": "Profesional Uno",
+      "email": "profesional1@healthsync.test",
+      "rol": "profesional"
+    },
+    {
+      "nombre": "Profesional Dos",
+      "email": "profesional2@healthsync.test",
+      "rol": "profesional"
+    }
+  ],
+  "api_externa": {
+    "nombre": "Open mHealth (simulada)",
+    "url_simulador": "http://mock-api:9000/openmhealth/v1"
+  }
+}

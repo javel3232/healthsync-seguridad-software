@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+entregas
+**/node_modules
+**/dist
+**/__pycache__
+worker/robot
+worker/src/*.o

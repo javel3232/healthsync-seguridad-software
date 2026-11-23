@@ -1,0 +1,166 @@
+# HealthSync - Seguridad en Software
+# Uso:  docker compose up --build
+# Borrar datos y empezar de cero:  docker compose down -v
+#
+# Solo dos puertos se publican en el equipo, y solo en 127.0.0.1 (no en la red local):
+#   8080 -> aplicación web      8025 -> bandeja de correos de prueba (Mailpit)
+# La base de datos, el backend y el simulador de la API externa solo son accesibles
+# desde la red interna de Docker.
+
+name: healthsync
+
+# Variables compartidas por el backend y el servicio de datos semilla.
+# Se pasan de forma explícita (no con env_file) para que cada servicio reciba solo lo que necesita.
+x-entorno-backend: &entorno-backend
+  CASO: ${CASO:-healthsync}
+  SECRET_KEY: ${SECRET_KEY:?Defina SECRET_KEY en .env}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  DB_HOST: db
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
+  MYSQL_USER: ${MYSQL_USER:-app}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD en .env}
+  SMTP_HOST: mailpit
+  WORKER_TOKEN: ${WORKER_TOKEN:?Defina WORKER_TOKEN en .env}
+  EXTERNAL_API_BASE_URL: ${EXTERNAL_API_BASE_URL:-}
+  EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-simulada}
+  BONO_BIENVENIDA: ${BONO_BIENVENIDA:-100}
+  PUNTOS_POR_REFERIDO: ${PUNTOS_POR_REFERIDO:-50}
+  PUNTOS_POR_MES_PREMIUM: ${PUNTOS_POR_MES_PREMIUM:-100}
+  MAX_TRANSFERENCIA: ${MAX_TRANSFERENCIA:-1000}
+  LOGIN_MAX_INTENTOS: ${LOGIN_MAX_INTENTOS:-5}
+  LOGIN_BLOQUEO_MINUTOS: ${LOGIN_BLOQUEO_MINUTOS:-15}
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD en .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-app}
+      # Usuario de la aplicación: solo tiene permisos sobre su propia base de datos.
+      MYSQL_USER: ${MYSQL_USER:-app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD en .env}
+    volumes:
+      - db-datos:/var/lib/mysql
+      # Los .sql de esta carpeta se ejecutan SOLO al crear el volumen por primera vez.
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u root --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  mailpit:
+    # Servidor de correo de pruebas: captura todos los correos que envía la aplicación.
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+
+  mock-api:
+    # Simulador de la API externa de wearables (Open mHealth).
+    build: ./mock-api
+    restart: unless-stopped
+
+  seed:
+    # Se ejecuta una vez: crea el administrador, las cuentas y los datos de ejemplo.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.seed"]
+    environment:
+      <<: *entorno-backend
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@healthsync.test}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD en .env}
+      SEED_PASSWORD: ${SEED_PASSWORD:?Defina SEED_PASSWORD en .env}
+    volumes:
+      - archivos:/var/lib/healthsync/archivos
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      <<: *entorno-backend
+    volumes:
+      # Fotos de las tarjetas profesionales: fuera de la carpeta que sirve nginx.
+      - archivos:/var/lib/healthsync/archivos
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+      mock-api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  worker:
+    # Robot 1 (C++): valida cada minuto las solicitudes de profesionales con documentación completa.
+    build: ./worker
+    environment:
+      ROBOT: validacion
+      BACKEND_URL: http://backend:8000
+      WORKER_TOKEN: ${WORKER_TOKEN:?Defina WORKER_TOKEN en .env}
+      WORKER_INTERVAL_SECONDS: ${WORKER_INTERVAL_SECONDS:-60}
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  worker-alertas:
+    # Robot 2 (C++): cada segundo evalúa las alertas de salud de los pacientes.
+    build: ./worker
+    environment:
+      ROBOT: alertas
+      BACKEND_URL: http://backend:8000
+      WORKER_TOKEN: ${WORKER_TOKEN:?Defina WORKER_TOKEN en .env}
+      WORKER_INTERVAL_SECONDS: ${WORKER_ALERTAS_INTERVAL_SECONDS:-1}
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  web:
+    # Sirve la SPA (Vue) y redirige /api al backend.
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  db-datos:
+  archivos:
